@@ -117,7 +117,7 @@ A Certificate Revocation List (CRL) is easy to understand -- it's just a list of
 
 When a third party wants to verify a principal's identity, it first checks the issuing CA's CRL to make sure that the certificate has not been declared invalid. A verifier doesn't have to check the CRL, but if they don't they run the risk of accepting a compromised identity.
 
-![CRL](./Identity.diagram.12.png)
+![CRL](./identity.diagram.12.png)
 
 *Using a CRL to check that a certificate is still valid. If an impersonator tries to pass a compromised digital certificate to a validating principal, it can be first checked against the issuing CA's CRL to make sure it's not listed as no longer valid.*
 
