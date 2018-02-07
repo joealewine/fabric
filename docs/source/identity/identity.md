@@ -107,7 +107,7 @@ Intermediate CAs provide a huge amount of flexibility when it comes to the issua
 
 ### Fabric CA
 
-It's because CAs are so important that Hyperledger Fabric provides a built-in CA component to allow you to create CAs in the blockchain networks you form. You don't have to use the Fabric CA, but you will find it very helpful when you're starting to build a blockchain network for the first time.
+It's because CAs are so important that Fabric provides a built-in CA component to allow you to create CAs in the blockchain networks you form. This component -- known as **fabric-ca** is private root CA provider capable of managing certificates for the principals in a Fabric network. It is self-signed and therefore is not inherently capable of providing SSL certificates for general/automatic use in browsers. However, because **some** CA must be used to manage identity (even in a test environment), fabric-ca can be used to provide and manage certificates. It is also possible -- and fully appropriate -- to use a public/commerical root or intermediate CA to provide identification.
 
 If you're interested, you can read a lot more about fabric-ca [in the CA documentation section](./http://hyperledger-fabric-ca.readthedocs.io/en/latest/).
 
