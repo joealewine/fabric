@@ -29,6 +29,7 @@ peer:
     bootstrap: 127.0.0.1:{{ .PeerPort Peer "Listen" }}
     useLeaderElection: true
     orgLeader: false
+    membershipTrackerInterval: 5s
     endpoint:
     maxBlockCountToStore: 100
     maxPropagationBurstLatency: 10ms
@@ -58,12 +59,21 @@ peer:
       leaderAliveThreshold: 10s
       leaderElectionDuration: 5s
     pvtData:
-      pullRetryThreshold: 15s
+      pullRetryThreshold: 60s
       transientstoreMaxBlockRetention: 1000
       pushAckTimeout: 3s
+      btlPullMargin: 10
       reconcileBatchSize: 10
       reconcileSleepInterval: 10s
       reconciliationEnabled: true
+      skipPullingInvalidTransactionsDuringCommit: false
+    state:
+       enabled: true
+       checkInterval: 10s
+       responseTimeout: 3s
+       batchSize: 10
+       blockBufferSize: 100
+       maxRetries: 3
   events:
     address: 127.0.0.1:{{ .PeerPort Peer "Events" }}
     buffersize: 100
@@ -161,6 +171,7 @@ chaincode:
     runtime: $(DOCKER_NS)/fabric-javaenv:latest
   node:
     runtime: $(DOCKER_NS)/fabric-nodeenv:latest
+  installTimeout: 300s
   startuptimeout: 300s
   executetimeout: 30s
   mode: net

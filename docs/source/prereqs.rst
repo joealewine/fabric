@@ -6,6 +6,12 @@ you have all the prerequisites below installed on the platform(s)
 on which you'll be developing blockchain applications and/or operating
 Hyperledger Fabric.
 
+Install Git
+-----------
+Download the latest version of `git
+<https://git-scm.com/downloads>`_ if it is not already installed,
+or if you have problems running the curl commands.
+
 Install cURL
 ------------
 
@@ -35,6 +41,26 @@ command from a terminal prompt:
 .. code:: bash
 
   docker --version
+
+.. note:: The following applies to linux systems running systemd.
+
+Make sure the docker daemon is running.
+
+.. code:: bash
+
+  sudo systemctl start docker
+
+Optional: If you want the docker daemon to start when the system starts, use the following:
+
+.. code:: bash
+
+  sudo systemctl enable docker
+
+Add your user to the docker group.
+
+.. code:: bash
+
+  sudo usermod -a -G docker <username>
 
 .. note:: Installing Docker for Mac or Windows, or Docker Toolbox will also
           install Docker Compose. If you already had Docker installed, you

@@ -86,10 +86,6 @@ func NewDeliverService(conf *Config) DeliverService {
 	return ds
 }
 
-func (d *deliverServiceImpl) UpdateEndpoints(chainID string, endpoints []string) error {
-	return nil
-}
-
 type DialerAdapter struct {
 	Client *comm.GRPCClient
 }
@@ -121,7 +117,7 @@ func (d *deliverServiceImpl) StartDeliverForChannel(chainID string, ledgerInfo b
 		logger.Errorf(errMsg)
 		return errors.New(errMsg)
 	}
-	logger.Debug("This peer will pass blocks from orderer service to other peers for channel", chainID)
+	logger.Info("This peer will retrieve blocks from ordering service and disseminate to other peers in the organization for channel", chainID)
 	dc := &blocksprovider.Deliverer{
 		ChannelID:     chainID,
 		Gossip:        d.conf.Gossip,

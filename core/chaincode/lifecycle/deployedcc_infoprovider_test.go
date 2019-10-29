@@ -11,13 +11,14 @@ import (
 
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric-protos-go/ledger/rwset/kvrwset"
-	pb "github.com/hyperledger/fabric-protos-go/peer"
+	"github.com/hyperledger/fabric-protos-go/msp"
 	lb "github.com/hyperledger/fabric-protos-go/peer/lifecycle"
 	"github.com/hyperledger/fabric/common/channelconfig"
 	"github.com/hyperledger/fabric/common/util"
 	"github.com/hyperledger/fabric/core/chaincode/lifecycle"
 	"github.com/hyperledger/fabric/core/chaincode/lifecycle/mock"
 	"github.com/hyperledger/fabric/core/ledger"
+	"github.com/hyperledger/fabric/protoutil"
 
 	"github.com/golang/protobuf/proto"
 
@@ -164,7 +165,6 @@ var _ = Describe("ValidatorCommitter", func() {
 			Expect(res.Version).To(Equal("version"))
 			Expect(res.Hash).To(Equal(util.ComputeSHA256([]byte("cc-name:version"))))
 			Expect(len(res.ExplicitCollectionConfigPkg.Config)).To(Equal(1))
-			Expect(len(res.ImplicitCollections)).To(Equal(2))
 		})
 
 		Context("when the requested chaincode is _lifecycle", func() {
@@ -172,19 +172,7 @@ var _ = Describe("ValidatorCommitter", func() {
 				res, err := vc.ChaincodeInfo("channel-name", "_lifecycle", fakeQueryExecutor)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(res.Name).To(Equal("_lifecycle"))
-				Expect(len(res.ImplicitCollections)).To(Equal(2))
 				Expect(res.ExplicitCollectionConfigPkg).To(BeNil())
-			})
-		})
-
-		Context("when the implicit collections return an error", func() {
-			BeforeEach(func() {
-				fakeChannelConfig.ApplicationConfigReturns(nil, false)
-			})
-
-			It("wraps and returns the error", func() {
-				_, err := vc.ChaincodeInfo("channel-name", "cc-name", fakeQueryExecutor)
-				Expect(err).To(MatchError("could not create implicit collections for channel: could not get application config for channel channel-name"))
 			})
 		})
 
@@ -367,12 +355,133 @@ var _ = Describe("ValidatorCommitter", func() {
 		})
 	})
 
+	Describe("AllCollectionsConfigPkg", func() {
+		It("returns the collection config package that includes both explicit and implicit collections as defined in the new lifecycle", func() {
+			ccPkg, err := vc.AllCollectionsConfigPkg("channel-name", "cc-name", fakeQueryExecutor)
+			Expect(err).NotTo(HaveOccurred())
+			collectionNames := []string{}
+			for _, config := range ccPkg.Config {
+				collectionNames = append(collectionNames, config.GetStaticCollectionConfig().GetName())
+			}
+			Expect(collectionNames).Should(ConsistOf("collection-name", "_implicit_org_first-mspid", "_implicit_org_second-mspid"))
+		})
+
+		Context("when no explicit collection config is defined", func() {
+			BeforeEach(func() {
+				err := resources.Serializer.Serialize(lifecycle.NamespacesName, "cc-without-explicit-collection",
+					&lifecycle.ChaincodeDefinition{
+						EndorsementInfo: &lb.ChaincodeEndorsementInfo{
+							Version: "version",
+						},
+						ValidationInfo: &lb.ChaincodeValidationInfo{
+							ValidationPlugin:    "validation-plugin",
+							ValidationParameter: []byte("validation-parameter"),
+						},
+					}, fakePublicState)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("returns only implicit collections", func() {
+				ccPkg, err := vc.AllCollectionsConfigPkg("channel-name", "cc-without-explicit-collection", fakeQueryExecutor)
+				Expect(err).NotTo(HaveOccurred())
+				collectionNames := []string{}
+				for _, config := range ccPkg.Config {
+					collectionNames = append(collectionNames, config.GetStaticCollectionConfig().GetName())
+				}
+				Expect(collectionNames).Should(ConsistOf("_implicit_org_first-mspid", "_implicit_org_second-mspid"))
+			})
+		})
+
+		Context("when the ledger returns an error", func() {
+			BeforeEach(func() {
+				fakeQueryExecutor.GetStateReturns(nil, fmt.Errorf("state-error"))
+			})
+
+			It("wraps and returns the error", func() {
+				_, err := vc.AllCollectionsConfigPkg("channel-name", "cc-name", fakeQueryExecutor)
+				Expect(err).To(MatchError("could not get info about chaincode: could not deserialize metadata for chaincode cc-name: could not query metadata for namespace namespaces/cc-name: state-error"))
+			})
+		})
+
+		Context("when there is no channel config", func() {
+			BeforeEach(func() {
+				fakeChannelConfigSource.GetStableChannelConfigReturns(nil)
+			})
+
+			It("returns an error", func() {
+				_, err := vc.AllCollectionsConfigPkg("channel-id", "cc-name", fakeQueryExecutor)
+				Expect(err).To(MatchError("could not get channelconfig for channel channel-id"))
+			})
+		})
+
+		Context("when there is no application config", func() {
+			BeforeEach(func() {
+				fakeChannelConfig.ApplicationConfigReturns(nil, false)
+			})
+
+			It("returns an error", func() {
+				_, err := vc.AllCollectionsConfigPkg("channel-id", "cc-name", fakeQueryExecutor)
+				Expect(err).To(MatchError("could not get application config for channel channel-id"))
+			})
+		})
+
+		Context("when the chaincode is not in the new lifecycle", func() {
+			var (
+				ccPkg *cb.CollectionConfigPackage
+			)
+
+			BeforeEach(func() {
+				ccPkg = &cb.CollectionConfigPackage{}
+				fakeLegacyProvider.ChaincodeInfoReturns(
+					&ledger.DeployedChaincodeInfo{
+						ExplicitCollectionConfigPkg: ccPkg,
+						IsLegacy:                    true,
+					},
+					nil,
+				)
+			})
+
+			It("passes through to the legacy impl", func() {
+				res, err := vc.AllCollectionsConfigPkg("channel-name", "legacy-name", fakeQueryExecutor)
+				Expect(fakeLegacyProvider.ChaincodeInfoCallCount()).To(Equal(1))
+				channelID, ccName, qe := fakeLegacyProvider.ChaincodeInfoArgsForCall(0)
+				Expect(channelID).To(Equal("channel-name"))
+				Expect(ccName).To(Equal("legacy-name"))
+				Expect(qe).To(Equal(fakeQueryExecutor))
+				Expect(res).To(Equal(ccPkg))
+				Expect(err).NotTo(HaveOccurred())
+			})
+		})
+
+		Context("when the chaincode is not in the new lifecycle and legacy info provider returns error", func() {
+			BeforeEach(func() {
+				fakeLegacyProvider.ChaincodeInfoReturns(nil, fmt.Errorf("legacy-chaincode-info-error"))
+			})
+
+			It("passes through to the legacy impl", func() {
+				_, err := vc.AllCollectionsConfigPkg("channel-name", "legacy-name", fakeQueryExecutor)
+				Expect(err).To(MatchError("legacy-chaincode-info-error"))
+			})
+		})
+
+		Context("when the data is corrupt", func() {
+			BeforeEach(func() {
+				fakePublicState["namespaces/fields/cc-name/ValidationInfo"] = []byte("garbage")
+			})
+
+			It("wraps and returns that error", func() {
+				_, err := vc.AllCollectionsConfigPkg("channel-name", "cc-name", fakeQueryExecutor)
+				Expect(err).To(MatchError("could not get info about chaincode: could not deserialize chaincode definition for chaincode cc-name: could not unmarshal state for key namespaces/fields/cc-name/ValidationInfo: proto: can't skip unknown wire type 7"))
+			})
+		})
+	})
+
 	Describe("LifecycleEndorsementPolicyAsBytes", func() {
 		It("returns the endorsement policy for the lifecycle chaincode", func() {
 			b, err := vc.LifecycleEndorsementPolicyAsBytes("channel-id")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(b).NotTo(BeNil())
-			policy := &pb.ApplicationPolicy{}
+			policy := &cb.ApplicationPolicy{}
 			err = proto.Unmarshal(b, policy)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(policy.GetChannelConfigPolicyReference()).To(Equal("/Channel/Application/LifecycleEndorsement"))
@@ -386,7 +495,7 @@ var _ = Describe("ValidatorCommitter", func() {
 			It("returns an error", func() {
 				b, err := vc.LifecycleEndorsementPolicyAsBytes("channel-id")
 				Expect(err).NotTo(HaveOccurred())
-				policy := &pb.ApplicationPolicy{}
+				policy := &cb.ApplicationPolicy{}
 				err = proto.Unmarshal(b, policy)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(policy.GetSignaturePolicy()).NotTo(BeNil())
@@ -542,6 +651,53 @@ var _ = Describe("ValidatorCommitter", func() {
 				})
 			})
 		})
+
+		Context("when the endorsement policy is specified in the collection config", func() {
+			var expectedPolicy *cb.ApplicationPolicy
+
+			BeforeEach(func() {
+				expectedPolicy = &cb.ApplicationPolicy{
+					Type: &cb.ApplicationPolicy_SignaturePolicy{
+						SignaturePolicy: &cb.SignaturePolicyEnvelope{
+							Identities: []*msp.MSPPrincipal{
+								{
+									Principal: []byte("test"),
+								},
+							},
+						},
+					},
+				}
+				err := resources.Serializer.Serialize(lifecycle.NamespacesName, "cc-name", &lifecycle.ChaincodeDefinition{
+					EndorsementInfo: &lb.ChaincodeEndorsementInfo{
+						Version: "version",
+					},
+					ValidationInfo: &lb.ChaincodeValidationInfo{
+						ValidationPlugin:    "validation-plugin",
+						ValidationParameter: []byte("validation-parameter"),
+					},
+					Collections: &cb.CollectionConfigPackage{
+						Config: []*cb.CollectionConfig{
+							{
+								Payload: &cb.CollectionConfig_StaticCollectionConfig{
+									StaticCollectionConfig: &cb.StaticCollectionConfig{
+										Name:              "collection-name",
+										EndorsementPolicy: expectedPolicy,
+									},
+								},
+							},
+						},
+					},
+				}, fakePublicState)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("returns the endorsement policy from the collection config", func() {
+				ep, uErr, vErr := vc.CollectionValidationInfo("channel-id", "cc-name", "collection-name", fakeValidationState)
+				Expect(uErr).NotTo(HaveOccurred())
+				Expect(vErr).NotTo(HaveOccurred())
+				Expect(ep).To(Equal(protoutil.MarshalOrPanic(expectedPolicy)))
+			})
+		})
 	})
 
 	Describe("ImplicitCollectionEndorsementPolicyAsBytes", func() {
@@ -549,7 +705,7 @@ var _ = Describe("ValidatorCommitter", func() {
 			ep, uErr, vErr := vc.ImplicitCollectionEndorsementPolicyAsBytes("channel-id", "first-mspid")
 			Expect(uErr).NotTo(HaveOccurred())
 			Expect(vErr).NotTo(HaveOccurred())
-			policy := &pb.ApplicationPolicy{}
+			policy := &cb.ApplicationPolicy{}
 			err := proto.Unmarshal(ep, policy)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(policy.GetChannelConfigPolicyReference()).To(Equal("/Channel/Application/org0/Endorsement"))
@@ -564,7 +720,7 @@ var _ = Describe("ValidatorCommitter", func() {
 				ep, uErr, vErr := vc.ImplicitCollectionEndorsementPolicyAsBytes("channel-id", "first-mspid")
 				Expect(uErr).NotTo(HaveOccurred())
 				Expect(vErr).NotTo(HaveOccurred())
-				policy := &pb.ApplicationPolicy{}
+				policy := &cb.ApplicationPolicy{}
 				err := proto.Unmarshal(ep, policy)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(policy.GetSignaturePolicy()).NotTo(BeNil())

@@ -4,7 +4,7 @@ The Hyperledger Fabric ordering service provides an atomic broadcast ordering se
 
 ## Protocol definition
 
-The atomic broadcast ordering protocol for Hyperledger Fabric is described in `hyperledger/fabric/protos/orderer/ab.proto`. There are two services: the `Broadcast` service for injecting messages into the system and the `Deliver` service for receiving ordered batches from the service.
+The atomic broadcast ordering protocol for Hyperledger Fabric is described in `hyperledger/fabric-protos/orderer/ab.proto`. There are two services: the `Broadcast` service for injecting messages into the system and the `Deliver` service for receiving ordered batches from the service.
 
 ## Service types
 
@@ -16,13 +16,13 @@ The atomic broadcast ordering protocol for Hyperledger Fabric is described in `h
 
 In order to set a service type, the ordering service administrator needs to set the right value in the genesis block that the ordering service nodes will be bootstrapped from.
 
-Specifically, the value corresponding to the `ConsensusType` key of the `Values` map of the `Orderer` config group on the system channel should be set to either `solo` or `kafka`.
+Specifically, the value corresponding to the `ConsensusType` key of the `Values` map of the `Orderer` config group on the system channel should be set to either `solo`, `kafka` or `etcdraft`.
 
 For details on the configuration structure of channels, refer to the [Channel Configuration](../docs/source/configtx.rst) guide.
 
 `configtxgen` is a tool that allows for the creation of a genesis block using profiles, or grouped configuration parameters — refer to the [Configuring using the connfigtxgen tool](../docs/source/configtxgen.rst) guide for more.
 
-The location of this block can be set using the `ORDERER_GENERAL_GENESISFILE` environment variable. As is the case with all the configuration paths for Fabric binaries, this location is relative to the path set via the `FABRIC_CFG_PATH` environment variable.
+The location of this block can be set using the `ORDERER_GENERAL_BOOTSTRAPFILE` environment variable. As is the case with all the configuration paths for Fabric binaries, this location is relative to the path set via the `FABRIC_CFG_PATH` environment variable.
 
 ## Ledger
 

@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"os"
@@ -28,6 +29,7 @@ import (
 	"github.com/hyperledger/fabric/bccsp/factory"
 	"github.com/hyperledger/fabric/common/cauthdsl"
 	ccdef "github.com/hyperledger/fabric/common/chaincode"
+	"github.com/hyperledger/fabric/common/crypto"
 	"github.com/hyperledger/fabric/common/crypto/tlsgen"
 	"github.com/hyperledger/fabric/common/deliver"
 	"github.com/hyperledger/fabric/common/flogging"
@@ -51,7 +53,7 @@ import (
 	coreconfig "github.com/hyperledger/fabric/core/config"
 	"github.com/hyperledger/fabric/core/container"
 	"github.com/hyperledger/fabric/core/container/dockercontroller"
-	"github.com/hyperledger/fabric/core/container/externalbuilders"
+	"github.com/hyperledger/fabric/core/container/externalbuilder"
 	"github.com/hyperledger/fabric/core/deliverservice"
 	"github.com/hyperledger/fabric/core/dispatcher"
 	"github.com/hyperledger/fabric/core/endorser"
@@ -127,7 +129,7 @@ var nodeStartCmd = &cobra.Command{
 // externalVMAdapter adapts coerces the result of Build to the
 // container.Interface type expected by the VM interface.
 type externalVMAdapter struct {
-	detector *externalbuilders.Detector
+	detector *externalbuilder.Detector
 }
 
 func (e externalVMAdapter) Build(
@@ -135,7 +137,16 @@ func (e externalVMAdapter) Build(
 	metadata *persistence.ChaincodePackageMetadata,
 	codePackage io.Reader,
 ) (container.Instance, error) {
-	return e.detector.Build(ccid, metadata, codePackage)
+	i, err := e.detector.Build(ccid, metadata, codePackage)
+	if err != nil {
+		return nil, err
+	}
+
+	// ensure <nil> is returned instead of (*externalbuilder.Instance)(nil)
+	if i == nil {
+		return nil, nil
+	}
+	return i, err
 }
 
 type endorserChannelAdapter struct {
@@ -252,12 +263,16 @@ func serve(args []string) error {
 	if err != nil {
 		return errors.WithMessage(err, "failed to open transient store")
 	}
+
+	deliverServiceConfig := deliverservice.GlobalConfig()
+
 	peerInstance := &peer.Peer{
-		Server:            peerServer,
-		ServerConfig:      serverConfig,
-		CredentialSupport: cs,
-		StoreProvider:     transientStoreProvider,
-		CryptoProvider:    factory.GetDefault(),
+		Server:                   peerServer,
+		ServerConfig:             serverConfig,
+		CredentialSupport:        cs,
+		StoreProvider:            transientStoreProvider,
+		CryptoProvider:           factory.GetDefault(),
+		OrdererEndpointOverrides: deliverServiceConfig.OrdererEndpointOverrides,
 	}
 
 	localMSP := mgmt.GetLocalMSP(factory.GetDefault())
@@ -265,9 +280,23 @@ func serve(args []string) error {
 	if err != nil {
 		logger.Panicf("Could not get the default signing identity from the local MSP: [%+v]", err)
 	}
-	policyMgr := policies.PolicyManagerGetterFunc(peerInstance.GetPolicyManager)
 
-	deliverServiceConfig := deliverservice.GlobalConfig()
+	signingIdentityBytes, err := signingIdentity.Serialize()
+	if err != nil {
+		logger.Panicf("Failed to serialize the signing identity: %v", err)
+	}
+
+	expirationLogger := flogging.MustGetLogger("certmonitor")
+	crypto.TrackExpiration(
+		serverConfig.SecOpts.UseTLS,
+		serverConfig.SecOpts.Certificate,
+		cs.GetClientCertificate().Certificate,
+		signingIdentityBytes,
+		expirationLogger.Warnf, // This can be used to piggyback a metric event in the future
+		time.Now(),
+		time.AfterFunc)
+
+	policyMgr := policies.PolicyManagerGetterFunc(peerInstance.GetPolicyManager)
 
 	deliverGRPCClient, err := comm.NewGRPCClient(comm.ClientConfig{
 		Timeout: deliverServiceConfig.ConnectionTimeout,
@@ -330,16 +359,14 @@ func serve(args []string) error {
 		LegacyDeployedCCInfoProvider: &lscc.DeployedCCInfoProvider{},
 	}
 
-	packageProvider := &persistence.PackageProvider{
-		LegacyPP: &ccprovider.CCInfoFSImpl{GetHasher: factory.GetDefault()},
-	}
+	ccInfoFSImpl := &ccprovider.CCInfoFSImpl{GetHasher: factory.GetDefault()}
 
 	// legacyMetadataManager collects metadata information from the legacy
 	// lifecycle (lscc). This is expected to disappear with FAB-15061.
 	legacyMetadataManager, err := cclifecycle.NewMetadataManager(
 		cclifecycle.EnumerateFunc(
 			func() ([]ccdef.InstalledChaincode, error) {
-				return packageProvider.ListInstalledChaincodesLegacy()
+				return ccInfoFSImpl.ListInstalledChaincodes(ccInfoFSImpl.GetChaincodeInstallPath(), ioutil.ReadDir, ccprovider.LoadPackage)
 			},
 		),
 	)
@@ -369,12 +396,12 @@ func serve(args []string) error {
 
 	chaincodeCustodian := lifecycle.NewChaincodeCustodian()
 
-	externalBuilderOutput := filepath.Join(coreconfig.GetPath("peer.fileSystemPath"), "externalbuilders", "builds")
+	externalBuilderOutput := filepath.Join(coreconfig.GetPath("peer.fileSystemPath"), "externalbuilder", "builds")
 	if err := os.MkdirAll(externalBuilderOutput, 0700); err != nil {
-		logger.Panicf("could not create externalbuilders build output dir: %s", err)
+		logger.Panicf("could not create externalbuilder build output dir: %s", err)
 	}
 
-	ebMetadataProvider := &externalbuilders.MetadataProvider{
+	ebMetadataProvider := &externalbuilder.MetadataProvider{
 		DurablePath: externalBuilderOutput,
 	}
 
@@ -496,8 +523,8 @@ func serve(args []string) error {
 		logger.Panicf("failed to register docker health check: %s", err)
 	}
 
-	externalVM := &externalbuilders.Detector{
-		Builders:    externalbuilders.CreateBuilders(coreConfig.ExternalBuilders),
+	externalVM := &externalbuilder.Detector{
+		Builders:    externalbuilder.CreateBuilders(coreConfig.ExternalBuilders),
 		DurablePath: externalBuilderOutput,
 	}
 
@@ -545,9 +572,6 @@ func serve(args []string) error {
 
 	containerRuntime := &chaincode.ContainerRuntime{
 		BuildRegistry:   buildRegistry,
-		CACert:          ca.CertBytes(),
-		CertGenerator:   authenticator,
-		PeerAddress:     ccEndpoint,
 		ContainerRouter: containerRouter,
 	}
 
@@ -571,16 +595,19 @@ func serve(args []string) error {
 		ACLProvider:            aclProvider,
 	}
 
-	// Keep TestQueries working
-	if !chaincodeConfig.TLSEnabled {
-		containerRuntime.CertGenerator = nil
-	}
-
 	chaincodeLauncher := &chaincode.RuntimeLauncher{
 		Metrics:        chaincode.NewLaunchMetrics(opsSystem.Provider),
 		Registry:       chaincodeHandlerRegistry,
 		Runtime:        containerRuntime,
 		StartupTimeout: chaincodeConfig.StartupTimeout,
+		CertGenerator:  authenticator,
+		CACert:         ca.CertBytes(),
+		PeerAddress:    ccEndpoint,
+	}
+
+	// Keep TestQueries working
+	if !chaincodeConfig.TLSEnabled {
+		chaincodeLauncher.CertGenerator = nil
 	}
 
 	go chaincodeCustodian.Work(buildRegistry, containerRouter, chaincodeLauncher)
@@ -590,6 +617,7 @@ func serve(args []string) error {
 		AppConfig:              peerInstance,
 		DeployedCCInfoProvider: lifecycleValidatorCommitter,
 		ExecuteTimeout:         chaincodeConfig.ExecuteTimeout,
+		InstallTimeout:         chaincodeConfig.InstallTimeout,
 		HandlerRegistry:        chaincodeHandlerRegistry,
 		HandlerMetrics:         chaincode.NewHandlerMetrics(opsSystem.Provider),
 		Keepalive:              chaincodeConfig.Keepalive,
@@ -1059,22 +1087,6 @@ func secureDialOpts(credSupport *comm.CredentialSupport) func() []grpc.DialOptio
 		}
 		return dialOpts
 	}
-}
-
-// deliverClientDialOpts creates GRPC dial options for deliver client service.
-func deliverClientDialOpts(coreConfig *peer.Config) []grpc.DialOption {
-	dialOpts := []grpc.DialOption{grpc.WithBlock()}
-	// set max send/recv msg sizes
-	dialOpts = append(
-		dialOpts,
-		grpc.WithDefaultCallOptions(
-			grpc.MaxCallRecvMsgSize(comm.MaxRecvMsgSize),
-			grpc.MaxCallSendMsgSize(comm.MaxSendMsgSize)))
-	// set the keepalive options
-	kaOpts := coreConfig.DeliverClientKeepaliveOptions
-	dialOpts = append(dialOpts, comm.ClientKeepaliveOptions(kaOpts)...)
-
-	return dialOpts
 }
 
 // initGossipService will initialize the gossip service by:

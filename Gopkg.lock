@@ -75,6 +75,14 @@
   version = "v1.20.1"
 
 [[projects]]
+  digest = "1:29add35a36be0ef65639a201df2b86e4e3d3b3b2e5eac4e35e02642b23b22405"
+  name = "github.com/VictoriaMetrics/fastcache"
+  packages = ["."]
+  pruneopts = "NUT"
+  revision = "4d94f266cd3cecbcd97eaebee9e3d6d8cf918643"
+  version = "v1.4.6"
+
+[[projects]]
   branch = "master"
   digest = "1:f3793f8a708522400cef1dba23385e901aede5519f68971fd69938ef330b07a1"
   name = "github.com/alecthomas/template"
@@ -100,6 +108,14 @@
   pruneopts = "NUT"
   revision = "4b2b341e8d7715fae06375aa633dbb6e91b3fb46"
   version = "v1.0.0"
+
+[[projects]]
+  digest = "1:0c31fa2fb2c809d61d640e28cc400087fe205df6ec9623dd1eb91a7de8d4f5d6"
+  name = "github.com/cespare/xxhash"
+  packages = ["."]
+  pruneopts = "NUT"
+  revision = "de209a9ffae3256185a6bb135d1a0ada7b2b5f09"
+  version = "v2.1.0"
 
 [[projects]]
   branch = "master"
@@ -323,12 +339,12 @@
   version = "v1.7.2"
 
 [[projects]]
-  digest = "1:1b497700cbc61544430babb4e4fd4313758bb9fec7144ca50c625fa6ce8266c7"
+  digest = "1:432e8b04365b52add2d6256a42de45cebebf6b7a132d4eacb052602fe199a80a"
   name = "github.com/grpc-ecosystem/go-grpc-middleware"
   packages = ["."]
   pruneopts = "NUT"
-  revision = "c250d6563d4d4c20252cd865923440e829844f4e"
-  version = "v1.0.0"
+  revision = "dd15ed025b6054e5253963e355991f3070d4e593"
+  version = "v1.1.0"
 
 [[projects]]
   digest = "1:53a4ebb0e1eb24a4644a3eec9457ba6ead5476a9ea5af43bf2c8b8b1a8ce47f2"
@@ -365,7 +381,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:d34c45c3c23a248b5e6fbe81f5663410ec779c36ccbfa6652f19d14c29d1c79b"
+  digest = "1:3744d14df8305f7573c5aeaa3752b57c8bb187d56a814ecbd775086b429c8727"
   name = "github.com/hyperledger/fabric-chaincode-go"
   packages = [
     "pkg/statebased",
@@ -374,7 +390,7 @@
     "shimtest",
   ]
   pruneopts = "NUT"
-  revision = "04390e015b8579092f488172f9d333df7f0f6b28"
+  revision = "d970cbc54e830c5dc8480ce3e71ffdc663d20fa5"
 
 [[projects]]
   digest = "1:0f4305e5a43e324844412168385a23ff23dafc55369fcbbc2ea77fb974f828cc"
@@ -386,7 +402,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:81ad31cdce826d64d33a2b9703ddd9982148ffedeea28768016d21b3efa55b73"
+  digest = "1:89ce1b92aff8f014e1728764f116fa9ff61c1137913bb3ed2ceb082cae01f9d4"
   name = "github.com/hyperledger/fabric-protos-go"
   packages = [
     "common",
@@ -403,7 +419,7 @@
     "transientstore",
   ]
   pruneopts = "NUT"
-  revision = "26c33c998676be969a8e0f4824defb3ee90a3d05"
+  revision = "c09017a7950bafbcd02c1c6a5ac1c71f1eaff239"
 
 [[projects]]
   branch = "master"
@@ -838,10 +854,9 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:f90b7107721bb4cf6d32bbaba6575b0741daffb9be17e22a8ed9afb989d605e3"
+  digest = "1:8dceb0c226ef5810bd2d51db196cef3efba52e87e6540331b2bcaa8f4be0d279"
   name = "golang.org/x/net"
   packages = [
-    "context",
     "html",
     "html/atom",
     "html/charset",
@@ -1028,6 +1043,7 @@
     "github.com/Knetic/govaluate",
     "github.com/Shopify/sarama",
     "github.com/Shopify/sarama/mocks",
+    "github.com/VictoriaMetrics/fastcache",
     "github.com/davecgh/go-spew/spew",
     "github.com/fsouza/go-dockerclient",
     "github.com/go-kit/kit/metrics",

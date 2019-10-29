@@ -26,6 +26,7 @@ import (
 	"github.com/hyperledger/fabric-protos-go/orderer/etcdraft"
 	"github.com/hyperledger/fabric/integration/nwo"
 	"github.com/hyperledger/fabric/integration/nwo/commands"
+	"github.com/hyperledger/fabric/integration/nwo/fabricconfig"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gbytes"
@@ -268,6 +269,87 @@ var _ = Describe("EndToEnd", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(len(files)).To(Equal(numOfSnaps))
 
+		})
+	})
+
+	Describe("single node etcdraft network with remapped orderer endpoints", func() {
+		BeforeEach(func() {
+			network = nwo.New(nwo.MinimalRaft(), testDir, client, StartPort(), components)
+			network.GenerateConfigTree()
+
+			configtxConfig := network.ReadConfigTxConfig()
+			ordererEndpoints := configtxConfig.Profiles["SampleDevModeEtcdRaft"].Orderer.Organizations[0].OrdererEndpoints
+			correctOrdererEndpoint := ordererEndpoints[0]
+			ordererEndpoints[0] = "127.0.0.1:1"
+			network.WriteConfigTxConfig(configtxConfig)
+
+			peer := network.Peer("Org1", "peer0")
+			peerConfig := network.ReadPeerConfig(peer)
+			peerConfig.Peer.Deliveryclient.AddressOverrides = []*fabricconfig.AddressOverride{
+				{
+					From:        "127.0.0.1:1",
+					To:          correctOrdererEndpoint,
+					CACertsFile: network.CACertsBundlePath(),
+				},
+			}
+			network.WritePeerConfig(peer, peerConfig)
+
+			network.Bootstrap()
+
+			networkRunner := network.NetworkGroupRunner()
+			process = ifrit.Invoke(networkRunner)
+			Eventually(process.Ready(), network.EventuallyTimeout).Should(BeClosed())
+		})
+
+		It("creates and updates channel", func() {
+			orderer := network.Orderer("orderer")
+
+			network.CreateAndJoinChannel(orderer, "testchannel")
+
+			// The below call waits for the config update to commit on the peer, so
+			// it will fail if the orderer addresses are wrong.
+			nwo.EnableCapabilities(network, "testchannel", "Application", "V2_0", orderer, network.Peer("Org1", "peer0"), network.Peer("Org2", "peer0"))
+		})
+	})
+
+	Describe("basic solo network without a system channel", func() {
+		var ordererProcess ifrit.Process
+		BeforeEach(func() {
+			soloConfig := nwo.BasicSolo()
+			network = nwo.New(soloConfig, testDir, client, StartPort(), components)
+			network.GenerateConfigTree()
+
+			orderer := network.Orderer("orderer")
+			ordererConfig := network.ReadOrdererConfig(orderer)
+			ordererConfig.General.GenesisMethod = "none"
+			network.WriteOrdererConfig(orderer, ordererConfig)
+			network.Bootstrap()
+
+			ordererRunner := network.OrdererRunner(orderer)
+			ordererProcess = ifrit.Invoke(ordererRunner)
+			Eventually(ordererProcess.Ready, network.EventuallyTimeout).Should(BeClosed())
+			Eventually(ordererRunner.Err(), network.EventuallyTimeout).Should(gbytes.Say("registrar initializing without a system channel"))
+		})
+
+		AfterEach(func() {
+			if ordererProcess != nil {
+				ordererProcess.Signal(syscall.SIGTERM)
+				Eventually(ordererProcess.Wait(), network.EventuallyTimeout).Should(Receive())
+			}
+		})
+
+		It("starts the orderer but rejects channel creation requests", func() {
+			By("attempting to create a channel without a system channel defined")
+			sess, err := network.PeerAdminSession(network.Peer("Org1", "peer0"), commands.ChannelCreate{
+				ChannelID:   "testchannel",
+				Orderer:     network.OrdererAddress(network.Orderer("orderer"), nwo.ListenPort),
+				File:        network.CreateChannelTxPath("testchannel"),
+				OutputBlock: "/dev/null",
+				ClientAuth:  network.ClientAuthRequired,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(sess, network.EventuallyTimeout).Should(gexec.Exit(1))
+			Eventually(sess.Err, network.EventuallyTimeout).Should(gbytes.Say("channel creation request not allowed because the orderer system channel is not yet defined"))
 		})
 	})
 })

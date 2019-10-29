@@ -21,16 +21,13 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"go.uber.org/zap/zapcore"
-	"google.golang.org/grpc"
-	"gopkg.in/alecthomas/kingpin.v2"
-
 	"github.com/hyperledger/fabric-lib-go/healthz"
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	ab "github.com/hyperledger/fabric-protos-go/orderer"
 	"github.com/hyperledger/fabric/bccsp"
 	"github.com/hyperledger/fabric/bccsp/factory"
 	"github.com/hyperledger/fabric/common/channelconfig"
+	"github.com/hyperledger/fabric/common/crypto"
 	"github.com/hyperledger/fabric/common/flogging"
 	floggingmetrics "github.com/hyperledger/fabric/common/flogging/metrics"
 	"github.com/hyperledger/fabric/common/grpclogging"
@@ -41,8 +38,6 @@ import (
 	"github.com/hyperledger/fabric/common/tools/protolator"
 	"github.com/hyperledger/fabric/core/comm"
 	"github.com/hyperledger/fabric/core/operations"
-	"github.com/hyperledger/fabric/internal/configtxgen/encoder"
-	"github.com/hyperledger/fabric/internal/configtxgen/genesisconfig"
 	"github.com/hyperledger/fabric/internal/pkg/identity"
 	"github.com/hyperledger/fabric/msp"
 	"github.com/hyperledger/fabric/orderer/common/bootstrap/file"
@@ -55,6 +50,9 @@ import (
 	"github.com/hyperledger/fabric/orderer/consensus/kafka"
 	"github.com/hyperledger/fabric/orderer/consensus/solo"
 	"github.com/hyperledger/fabric/protoutil"
+	"go.uber.org/zap/zapcore"
+	"google.golang.org/grpc"
+	"gopkg.in/alecthomas/kingpin.v2"
 )
 
 var logger = flogging.MustGetLogger("orderer.common.server")
@@ -64,7 +62,6 @@ var (
 	app = kingpin.New("orderer", "Hyperledger Fabric orderer node")
 
 	_       = app.Command("start", "Start the orderer node").Default() // preserved for cli compatibility
-	_       = app.Command("benchmark", "Run orderer in benchmark mode")
 	version = app.Command("version", "Show version information")
 
 	clusterTypes = map[string]struct{}{"etcdraft": {}}
@@ -89,12 +86,11 @@ func Main() {
 
 	prettyPrintStruct(conf)
 
-	bootstrapBlock := extractBootstrapBlock(conf)
-
 	cryptoProvider := factory.GetDefault()
 
-	if err := ValidateBootstrapBlock(bootstrapBlock, cryptoProvider); err != nil {
-		logger.Panicf("Failed validating bootstrap block: %v", err)
+	signer, signErr := loadLocalMSP(conf).GetDefaultSigningIdentity()
+	if signErr != nil {
+		logger.Panicf("Failed to get local MSP identity: %s", signErr)
 	}
 
 	opsSystem := newOperationsSystem(conf.Operations, conf.Metrics)
@@ -103,19 +99,6 @@ func Main() {
 	}
 	defer opsSystem.Stop()
 	metricsProvider := opsSystem.Provider
-
-	lf, _, err := createLedgerFactory(conf, metricsProvider)
-	if err != nil {
-		logger.Panicf("Failed in creating ledger factory: %v", err)
-	}
-	sysChanLastConfigBlock := extractSysChanLastConfig(lf, bootstrapBlock)
-	clusterBootBlock := selectClusterBootBlock(bootstrapBlock, sysChanLastConfigBlock)
-
-	signer, signErr := loadLocalMSP(conf).GetDefaultSigningIdentity()
-	if signErr != nil {
-		logger.Panicf("Failed to get local MSP identity: %s", signErr)
-	}
-
 	logObserver := floggingmetrics.NewObserver(metricsProvider)
 	flogging.SetObserver(logObserver)
 
@@ -127,39 +110,74 @@ func Main() {
 		clientRootCAs:         serverConfig.SecOpts.ClientRootCAs,
 	}
 
+	lf, _, err := createLedgerFactory(conf, metricsProvider)
+	if err != nil {
+		logger.Panicf("Failed to create ledger factory: %v", err)
+	}
+
+	var clusterBootBlock *cb.Block
 	// configure following artifacts properly if orderer is of cluster type
 	var r *replicationInitiator
 	clusterServerConfig := serverConfig
 	clusterGRPCServer := grpcServer // by default, cluster shares the same grpc server
 	var clusterClientConfig comm.ClientConfig
 	var clusterDialer *cluster.PredicateDialer
-
-	var reuseGrpcListener bool
-	typ := consensusType(bootstrapBlock, cryptoProvider)
+	var clusterType, reuseGrpcListener bool
 	var serversToUpdate []*comm.GRPCServer
+	if conf.General.GenesisMethod == "file" {
+		bootstrapBlock := extractBootstrapBlock(conf)
+		if err := ValidateBootstrapBlock(bootstrapBlock, cryptoProvider); err != nil {
+			logger.Panicf("Failed validating bootstrap block: %v", err)
+		}
+		sysChanLastConfigBlock := extractSysChanLastConfig(lf, bootstrapBlock)
+		clusterBootBlock = selectClusterBootBlock(bootstrapBlock, sysChanLastConfigBlock)
 
-	clusterType := isClusterType(clusterBootBlock, cryptoProvider)
-	if clusterType {
-		logger.Infof("Setting up cluster for orderer type %s", typ)
-		clusterClientConfig = initializeClusterClientConfig(conf)
-		clusterDialer = &cluster.PredicateDialer{
-			Config: clusterClientConfig,
+		typ := consensusType(bootstrapBlock, cryptoProvider)
+		clusterType = isClusterType(clusterBootBlock, cryptoProvider)
+		if clusterType {
+			logger.Infof("Setting up cluster for orderer type %s", typ)
+			clusterClientConfig = initializeClusterClientConfig(conf)
+			clusterDialer = &cluster.PredicateDialer{
+				Config: clusterClientConfig,
+			}
+
+			r = createReplicator(lf, bootstrapBlock, conf, clusterClientConfig.SecOpts, signer, cryptoProvider)
+			// Only clusters that are equipped with a recent config block can replicate.
+			if conf.General.GenesisMethod == "file" {
+				r.replicateIfNeeded(bootstrapBlock)
+			}
+
+			if reuseGrpcListener = reuseListener(conf, typ); !reuseGrpcListener {
+				clusterServerConfig, clusterGRPCServer = configureClusterListener(conf, serverConfig, ioutil.ReadFile)
+			}
+
+			// If we have a separate gRPC server for the cluster,
+			// we need to update its TLS CA certificate pool.
+			serversToUpdate = append(serversToUpdate, clusterGRPCServer)
+		}
+		// Are we bootstrapping?
+		if len(lf.ChannelIDs()) == 0 {
+			initializeBootstrapChannel(clusterBootBlock, lf)
+		} else {
+			logger.Info("Not bootstrapping because of existing channels")
 		}
 
-		r = createReplicator(lf, bootstrapBlock, conf, clusterClientConfig.SecOpts, signer, cryptoProvider)
-		// Only clusters that are equipped with a recent config block can replicate.
-		if conf.General.GenesisMethod == "file" {
-			r.replicateIfNeeded(bootstrapBlock)
-		}
-
-		if reuseGrpcListener = reuseListener(conf, typ); !reuseGrpcListener {
-			clusterServerConfig, clusterGRPCServer = configureClusterListener(conf, serverConfig, ioutil.ReadFile)
-		}
-
-		// If we have a separate gRPC server for the cluster,
-		// we need to update its TLS CA certificate pool.
-		serversToUpdate = append(serversToUpdate, clusterGRPCServer)
 	}
+
+	identityBytes, err := signer.Serialize()
+	if err != nil {
+		logger.Panicf("Failed serializing signing identity: %v", err)
+	}
+
+	expirationLogger := flogging.MustGetLogger("certmonitor")
+	crypto.TrackExpiration(
+		serverConfig.SecOpts.UseTLS,
+		serverConfig.SecOpts.Certificate,
+		[][]byte{clusterClientConfig.SecOpts.Certificate},
+		identityBytes,
+		expirationLogger.Warnf, // This can be used to piggyback a metric event in the future
+		time.Now(),
+		time.AfterFunc)
 
 	// if cluster is reusing client-facing server, then it is already
 	// appended to serversToUpdate at this point.
@@ -573,10 +591,10 @@ func extractBootstrapBlock(conf *localconfig.TopLevel) *cb.Block {
 
 	// Select the bootstrapping mechanism
 	switch conf.General.GenesisMethod {
-	case "provisional":
-		bootstrapBlock = encoder.New(genesisconfig.Load(conf.General.GenesisProfile)).GenesisBlockForChannel(conf.General.SystemChannel)
-	case "file":
-		bootstrapBlock = file.New(conf.General.GenesisFile).GenesisBlock()
+	case "file": // For now, "file" is the only supported genesis method
+		bootstrapBlock = file.New(conf.General.BootstrapFile).GenesisBlock()
+	case "none": // simply honor the configuration value
+		return nil
 	default:
 		logger.Panic("Unknown genesis method:", conf.General.GenesisMethod)
 	}
@@ -685,26 +703,19 @@ func initializeMultichannelRegistrar(
 	bccsp bccsp.BCCSP,
 	callbacks ...channelconfig.BundleActor,
 ) *multichannel.Registrar {
-	genesisBlock := extractBootstrapBlock(conf)
-	// Are we bootstrapping?
-	if len(lf.ChannelIDs()) == 0 {
-		initializeBootstrapChannel(genesisBlock, lf)
-	} else {
-		logger.Info("Not bootstrapping because of existing channels")
-	}
-
-	consenters := make(map[string]consensus.Consenter)
-
 	registrar := multichannel.NewRegistrar(*conf, lf, signer, metricsProvider, bccsp, callbacks...)
 
+	consenters := map[string]consensus.Consenter{}
 	consenters["solo"] = solo.New()
 	var kafkaMetrics *kafka.Metrics
 	consenters["kafka"], kafkaMetrics = kafka.New(conf.Kafka, metricsProvider, healthChecker)
 	// Note, we pass a 'nil' channel here, we could pass a channel that
 	// closes if we wished to cleanup this routine on exit.
 	go kafkaMetrics.PollGoMetricsUntilStop(time.Minute, nil)
-	if isClusterType(bootstrapBlock, bccsp) {
-		initializeEtcdraftConsenter(consenters, conf, lf, clusterDialer, bootstrapBlock, ri, srvConf, srv, registrar, metricsProvider, bccsp)
+	if conf.General.GenesisMethod == "file" {
+		if isClusterType(bootstrapBlock, bccsp) {
+			initializeEtcdraftConsenter(consenters, conf, lf, clusterDialer, bootstrapBlock, ri, srvConf, srv, registrar, metricsProvider, bccsp)
+		}
 	}
 	registrar.Initialize(consenters)
 	return registrar

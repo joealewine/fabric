@@ -57,11 +57,15 @@ func NewCommonStorageDBProvider(
 	metricsProvider metrics.Provider,
 	healthCheckRegistry ledger.HealthCheckRegistry,
 	stateDBConf *StateDBConfig,
+	sysNamespaces []string,
 ) (DBProvider, error) {
+
 	var vdbProvider statedb.VersionedDBProvider
 	var err error
+
 	if stateDBConf != nil && stateDBConf.StateDatabase == couchDB {
-		if vdbProvider, err = statecouchdb.NewVersionedDBProvider(stateDBConf.CouchDB, metricsProvider); err != nil {
+		cache := statedb.NewCache(stateDBConf.CouchDB.UserCacheSizeMBs, sysNamespaces)
+		if vdbProvider, err = statecouchdb.NewVersionedDBProvider(stateDBConf.CouchDB, metricsProvider, cache); err != nil {
 			return nil, err
 		}
 	} else {
@@ -80,6 +84,7 @@ func NewCommonStorageDBProvider(
 	return dbProvider, nil
 }
 
+// RegisterHealthChecker implements function from interface DBProvider
 func (p *CommonStorageDBProvider) RegisterHealthChecker() error {
 	if healthChecker, ok := p.VersionedDBProvider.(healthz.HealthChecker); ok {
 		return p.HealthCheckRegistry.RegisterChecker("couchdb", healthChecker)

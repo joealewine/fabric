@@ -25,7 +25,7 @@ type State interface {
 	GetState(namespace string, key string) ([]byte, error)
 }
 
-type NoSuchCollectionError common.CollectionCriteria
+type NoSuchCollectionError CollectionCriteria
 
 func (f NoSuchCollectionError) Error() string {
 	return fmt.Sprintf("collection %s/%s/%s could not be found", f.Channel, f.Namespace, f.Collection)
@@ -45,6 +45,8 @@ type ChaincodeInfoProvider interface {
 	// CollectionInfo returns the proto msg that defines the named collection.
 	// This function can be used for both explicit and implicit collections.
 	CollectionInfo(channelName, chaincodeName, collectionName string, qe ledger.SimpleQueryExecutor) (*common.StaticCollectionConfig, error)
+	// AllCollectionsConfigPkg returns a combined collection config pkg that contains both explicit and implicit collections
+	AllCollectionsConfigPkg(channelName, chaincodeName string, qe ledger.SimpleQueryExecutor) (*common.CollectionConfigPackage, error)
 }
 
 // IdentityDeserializerFactory creates msp.IdentityDeserializer for
@@ -59,6 +61,14 @@ type IdentityDeserializerFactoryFunc func(chainID string) msp.IdentityDeserializ
 
 func (i IdentityDeserializerFactoryFunc) GetIdentityDeserializer(chainID string) msp.IdentityDeserializer {
 	return i(chainID)
+}
+
+// CollectionCriteria defines an element of a private data that corresponds
+// to a certain transaction and collection
+type CollectionCriteria struct {
+	Channel    string
+	Collection string
+	Namespace  string
 }
 
 type SimpleCollectionStore struct {
@@ -77,7 +87,7 @@ func NewSimpleCollectionStore(qeFactory QueryExecutorFactory, ccInfoProvider Cha
 	}
 }
 
-func (c *SimpleCollectionStore) retrieveCollectionConfigPackage(cc common.CollectionCriteria, qe ledger.QueryExecutor) (*common.CollectionConfigPackage, error) {
+func (c *SimpleCollectionStore) retrieveCollectionConfigPackage(cc CollectionCriteria, qe ledger.QueryExecutor) (*common.CollectionConfigPackage, error) {
 	var err error
 	if qe == nil {
 		qe, err = c.qeFactory.NewQueryExecutor()
@@ -86,18 +96,11 @@ func (c *SimpleCollectionStore) retrieveCollectionConfigPackage(cc common.Collec
 		}
 		defer qe.Done()
 	}
-	ccInfo, err := c.ccInfoProvider.ChaincodeInfo(cc.Channel, cc.Namespace, qe)
-	if err != nil {
-		return nil, err
-	}
-	if ccInfo == nil {
-		return nil, errors.Errorf("Chaincode [%s] does not exist", cc.Namespace)
-	}
-	return ccInfo.AllCollectionsConfigPkg(), nil
+	return c.ccInfoProvider.AllCollectionsConfigPkg(cc.Channel, cc.Namespace, qe)
 }
 
 // RetrieveCollectionConfigPackageFromState retrieves the collection config package from the given key from the given state
-func RetrieveCollectionConfigPackageFromState(cc common.CollectionCriteria, state State) (*common.CollectionConfigPackage, error) {
+func RetrieveCollectionConfigPackageFromState(cc CollectionCriteria, state State) (*common.CollectionConfigPackage, error) {
 	cb, err := state.GetState("lscc", BuildCollectionKVSKey(cc.Namespace))
 	if err != nil {
 		return nil, errors.WithMessagef(err, "error while retrieving collection for collection criteria %#v", cc)
@@ -123,7 +126,12 @@ func ParseCollectionConfig(colBytes []byte) (*common.CollectionConfigPackage, er
 	return collections, nil
 }
 
-func (c *SimpleCollectionStore) retrieveCollectionConfig(cc common.CollectionCriteria, qe ledger.QueryExecutor) (*common.StaticCollectionConfig, error) {
+// RetrieveCollectionConfig retrieves a collection's config
+func (c *SimpleCollectionStore) RetrieveCollectionConfig(cc CollectionCriteria) (*common.StaticCollectionConfig, error) {
+	return c.retrieveCollectionConfig(cc, nil)
+}
+
+func (c *SimpleCollectionStore) retrieveCollectionConfig(cc CollectionCriteria, qe ledger.QueryExecutor) (*common.StaticCollectionConfig, error) {
 	var err error
 	if qe == nil {
 		qe, err = c.qeFactory.NewQueryExecutor()
@@ -142,7 +150,7 @@ func (c *SimpleCollectionStore) retrieveCollectionConfig(cc common.CollectionCri
 	return collConfig, nil
 }
 
-func (c *SimpleCollectionStore) retrieveSimpleCollection(cc common.CollectionCriteria, qe ledger.QueryExecutor) (*SimpleCollection, error) {
+func (c *SimpleCollectionStore) retrieveSimpleCollection(cc CollectionCriteria, qe ledger.QueryExecutor) (*SimpleCollection, error) {
 	staticCollectionConfig, err := c.retrieveCollectionConfig(cc, qe)
 	if err != nil {
 		return nil, err
@@ -164,20 +172,20 @@ func (c *SimpleCollectionStore) AccessFilter(channelName string, collectionPolic
 	return sc.AccessFilter(), nil
 }
 
-func (c *SimpleCollectionStore) RetrieveCollection(cc common.CollectionCriteria) (Collection, error) {
+func (c *SimpleCollectionStore) RetrieveCollection(cc CollectionCriteria) (Collection, error) {
 	return c.retrieveSimpleCollection(cc, nil)
 }
 
-func (c *SimpleCollectionStore) RetrieveCollectionAccessPolicy(cc common.CollectionCriteria) (CollectionAccessPolicy, error) {
+func (c *SimpleCollectionStore) RetrieveCollectionAccessPolicy(cc CollectionCriteria) (CollectionAccessPolicy, error) {
 	return c.retrieveSimpleCollection(cc, nil)
 }
 
-func (c *SimpleCollectionStore) RetrieveCollectionConfigPackage(cc common.CollectionCriteria) (*common.CollectionConfigPackage, error) {
+func (c *SimpleCollectionStore) RetrieveCollectionConfigPackage(cc CollectionCriteria) (*common.CollectionConfigPackage, error) {
 	return c.retrieveCollectionConfigPackage(cc, nil)
 }
 
 // RetrieveCollectionPersistenceConfigs retrieves the collection's persistence related configurations
-func (c *SimpleCollectionStore) RetrieveCollectionPersistenceConfigs(cc common.CollectionCriteria) (CollectionPersistenceConfigs, error) {
+func (c *SimpleCollectionStore) RetrieveCollectionPersistenceConfigs(cc CollectionCriteria) (CollectionPersistenceConfigs, error) {
 	staticCollectionConfig, err := c.retrieveCollectionConfig(cc, nil)
 	if err != nil {
 		return nil, err
@@ -189,7 +197,7 @@ func (c *SimpleCollectionStore) RetrieveCollectionPersistenceConfigs(cc common.C
 // signedProposal for a given collection using collection access policy and flags such as
 // memberOnlyRead & memberOnlyWrite
 func (c *SimpleCollectionStore) RetrieveReadWritePermission(
-	cc common.CollectionCriteria,
+	cc CollectionCriteria,
 	signedProposal *pb.SignedProposal,
 	qe ledger.QueryExecutor,
 ) (bool, bool, error) {

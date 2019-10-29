@@ -327,6 +327,16 @@ peer:
         # It sets the delivery service maximal delay between consecutive retries
         reConnectBackoffThreshold: 3600s
 
+        # A list of orderer endpoint addresses which should be overridden
+        # when found in channel configurations.
+        addressOverrides:
+        #  - from:
+        #    to:
+        #    caCertsFile:
+        #  - from:
+        #    to:
+        #    caCertsFile:
+
     # Type for the local MSP - by default it's of type bccsp
     localMspType: bccsp
 
@@ -513,8 +523,12 @@ chaincode:
     # builders in the order specified below.
     externalBuilders: []
 
+    # The maximum duration to wait for the chaincode build and install process
+    # to complete.
+    installTimeout: 300s
+
     # Timeout duration for starting up a container and waiting for Register
-    # to come through. 1sec should be plenty for chaincode unit tests
+    # to come through.
     startuptimeout: 300s
 
     # Timeout duration for Invoke and Init calls to prevent runaway.
@@ -614,6 +628,11 @@ ledger:
        # This is optional.  Creating the global changes database will require
        # additional system resources to track changes and maintain the database
        createGlobalChangesDB: false
+       # CacheSize denotes the maximum mega bytes (MB) to be allocated for the in-memory state
+       # cache. Note that CacheSize needs to be a multiple of 32 MB. If it is not a multiple
+       # of 32 MB, the peer would round the size to the next multiple of 32 MB.
+       # To disable the cache, 0 MB needs to be assigned to the cacheSize.
+       cacheSize: 64
 
   history:
     # enableHistoryDatabase - options are true or false

@@ -174,13 +174,14 @@ func (c *configSupport) GetChannelConfig(cid string) cc.Config {
 
 // A Peer holds references to subsystems and channels associated with a Fabric peer.
 type Peer struct {
-	Server            *comm.GRPCServer
-	ServerConfig      comm.ServerConfig
-	CredentialSupport *comm.CredentialSupport
-	StoreProvider     transientstore.StoreProvider
-	GossipService     *gossipservice.GossipService
-	LedgerMgr         *ledgermgmt.LedgerMgr
-	CryptoProvider    bccsp.BCCSP
+	Server                   *comm.GRPCServer
+	ServerConfig             comm.ServerConfig
+	CredentialSupport        *comm.CredentialSupport
+	StoreProvider            transientstore.StoreProvider
+	GossipService            *gossipservice.GossipService
+	LedgerMgr                *ledgermgmt.LedgerMgr
+	OrdererEndpointOverrides map[string]*orderers.Endpoint
+	CryptoProvider           bccsp.BCCSP
 
 	// validationWorkersSemaphore is used to limit the number of concurrent validation
 	// go routines.
@@ -290,7 +291,7 @@ func (p *Peer) createChannel(
 
 	osLogger := flogging.MustGetLogger("peer.orderers")
 	namedOSLogger := osLogger.With("channel", cid)
-	ordererSource := orderers.NewConnectionSource(namedOSLogger)
+	ordererSource := orderers.NewConnectionSource(namedOSLogger, p.OrdererEndpointOverrides)
 
 	ordererSourceCallback := func(bundle *channelconfig.Bundle) {
 		globalAddresses := bundle.ChannelConfig().OrdererAddresses()
@@ -504,7 +505,7 @@ func (p *Peer) Initialize(
 		peerLogger.Infof("Loading chain %s", cid)
 		ledger, err := p.LedgerMgr.OpenLedger(cid)
 		if err != nil {
-			peerLogger.Errorf("Failed to load ledger %s(%s)", cid, err)
+			peerLogger.Errorf("Failed to load ledger %s(%+v)", cid, err)
 			peerLogger.Debugf("Error while loading ledger %s with message %s. We continue to the next ledger rather than abort.", cid, err)
 			continue
 		}

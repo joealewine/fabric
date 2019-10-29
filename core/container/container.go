@@ -33,6 +33,7 @@ type VM interface {
 // 'image' also seemed inappropriate.  So, the vague 'Instance' is used here.
 type Instance interface {
 	Start(peerConnection *ccintf.PeerConnection) error
+	ChaincodeServerInfo() (*ccintf.ChaincodeServerInfo, error)
 	Stop() error
 	Wait() (int, error)
 }
@@ -41,6 +42,10 @@ type UninitializedInstance struct{}
 
 func (UninitializedInstance) Start(peerConnection *ccintf.PeerConnection) error {
 	return errors.Errorf("instance has not yet been built, cannot be started")
+}
+
+func (UninitializedInstance) ChaincodeServerInfo() (*ccintf.ChaincodeServerInfo, error) {
+	return nil, errors.Errorf("instance has not yet been built, cannot get chaincode server info")
 }
 
 func (UninitializedInstance) Stop() error {
@@ -69,14 +74,10 @@ type Router struct {
 func (r *Router) getInstance(ccid string) Instance {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
+
 	// Note, to resolve the locking problem which existed in the previous code, we never delete
 	// references from the map.  In this way, it is safe to release the lock and operate
 	// on the returned reference
-
-	if r.containers == nil {
-		r.containers = map[string]Instance{}
-	}
-
 	vm, ok := r.containers[ccid]
 	if !ok {
 		return UninitializedInstance{}
@@ -86,46 +87,48 @@ func (r *Router) getInstance(ccid string) Instance {
 }
 
 func (r *Router) Build(ccid string) error {
-	// for now, the package ID we retrieve from the FS is always the ccid
-	// the chaincode uses for registration
-	packageID := ccid
-
 	var instance Instance
 
-	var externalErr error
 	if r.ExternalVM != nil {
-		metadata, codeStream, err := r.PackageProvider.GetChaincodePackage(packageID)
-		if err != nil {
-			return errors.WithMessage(err, "get chaincode package for external build failed")
-		}
-		instance, externalErr = r.ExternalVM.Build(ccid, metadata, codeStream)
-		codeStream.Close()
-	}
-
-	var dockerErr error
-	if r.ExternalVM == nil || externalErr != nil {
+		// for now, the package ID we retrieve from the FS is always the ccid
+		// the chaincode uses for registration
 		metadata, codeStream, err := r.PackageProvider.GetChaincodePackage(ccid)
 		if err != nil {
-			return errors.WithMessage(err, "get chaincode package for docker build failed")
+			return errors.WithMessage(err, "failed to get chaincode package for external build")
 		}
-		instance, dockerErr = r.DockerVM.Build(ccid, metadata, codeStream)
-		codeStream.Close()
+		defer codeStream.Close()
+
+		instance, err = r.ExternalVM.Build(ccid, metadata, codeStream)
+		if err != nil {
+			return errors.WithMessage(err, "external builder failed")
+		}
 	}
 
-	if dockerErr != nil {
-		return errors.WithMessagef(dockerErr, "failed external (%s) and docker build", externalErr)
+	if instance == nil {
+		metadata, codeStream, err := r.PackageProvider.GetChaincodePackage(ccid)
+		if err != nil {
+			return errors.WithMessage(err, "failed to get chaincode package for docker build")
+		}
+		defer codeStream.Close()
+
+		instance, err = r.DockerVM.Build(ccid, metadata, codeStream)
+		if err != nil {
+			return errors.WithMessage(err, "docker build failed")
+		}
 	}
 
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
-
 	if r.containers == nil {
 		r.containers = map[string]Instance{}
 	}
-
 	r.containers[ccid] = instance
 
 	return nil
+}
+
+func (r *Router) ChaincodeServerInfo(ccid string) (*ccintf.ChaincodeServerInfo, error) {
+	return r.getInstance(ccid).ChaincodeServerInfo()
 }
 
 func (r *Router) Start(ccid string, peerConnection *ccintf.PeerConnection) error {

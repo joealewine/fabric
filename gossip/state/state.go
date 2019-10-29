@@ -110,8 +110,9 @@ type ledgerResources interface {
 	// StorePvtData used to persist private date into transient store
 	StorePvtData(txid string, privData *transientstore.TxPvtReadWriteSetWithConfigInfo, blckHeight uint64) error
 
-	// GetPvtDataAndBlockByNum get block by number and returns also all related private data
-	// the order of private data in slice of PvtDataCollections doesn't imply the order of
+	// GetPvtDataAndBlockByNum gets block by number and also returns all related private data
+	// that requesting peer is eligible for.
+	// The order of private data in slice of PvtDataCollections doesn't imply the order of
 	// transactions in the block related to these private data, to get the correct placement
 	// need to read TxPvtData.SeqInBlock field
 	GetPvtDataAndBlockByNum(seqNum uint64, peerAuthInfo protoutil.SignedData) (*common.Block, util.PvtDataCollections, error)
@@ -258,8 +259,8 @@ func NewGossipStateProvider(
 		config:              config,
 	}
 
-	logger.Infof("Updating metadata information, "+
-		"current ledger sequence is at = %d, next expected block is = %d", height-1, s.payloads.Next())
+	logger.Infof("Updating metadata information for channel %s, "+
+		"current ledger sequence is at = %d, next expected block is = %d", chainID, height-1, s.payloads.Next())
 	logger.Debug("Updating gossip ledger height to", height)
 	services.UpdateLedgerHeight(height, common2.ChannelID(s.chainID))
 

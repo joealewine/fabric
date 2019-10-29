@@ -69,13 +69,11 @@ MARCH=$(shell go env GOOS)-$(shell go env GOARCH)
 # defined in common/metadata/metadata.go
 METADATA_VAR = Version=$(BASE_VERSION)
 METADATA_VAR += CommitSHA=$(EXTRA_VERSION)
-METADATA_VAR += BaseVersion=$(BASEIMAGE_RELEASE)
 METADATA_VAR += BaseDockerLabel=$(BASE_DOCKER_LABEL)
 METADATA_VAR += DockerNamespace=$(DOCKER_NS)
 METADATA_VAR += BaseDockerNamespace=$(BASE_DOCKER_NS)
 
-# GO_VER = $(shell grep "GO_VER" ci.properties |cut -d'=' -f2-)
-GO_VER = 1.12.7
+GO_VER = $(shell grep "GO_VER" ci.properties |cut -d'=' -f2-)
 GO_TAGS ?=
 
 RELEASE_EXES = orderer $(TOOLS_EXES)
@@ -103,7 +101,7 @@ all: check-go-version native docker checks
 checks: basic-checks unit-test integration-test
 
 .PHONY: basic-checks
-basic-checks: check-go-version license spelling references trailing-spaces linter check-metrics-doc
+basic-checks: check-go-version license spelling references trailing-spaces linter check-metrics-doc filename-spaces
 
 .PHONY: desk-checks
 desk-check: checks verify
@@ -199,9 +197,7 @@ native: $(RELEASE_EXES)
 .PHONY: $(RELEASE_EXES)
 $(RELEASE_EXES): %: $(BUILD_DIR)/bin/%
 
-$(BUILD_DIR)/bin/%: GO_LDFLAGS = -X $(pkgmap.$(@F))/metadata.CommitSHA=$(EXTRA_VERSION)
-$(BUILD_DIR)/bin/peer: GO_LDFLAGS = $(METADATA_VAR:%=-X $(PKGNAME)/common/metadata.%)
-$(BUILD_DIR)/bin/orderer: GO_LDFLAGS = $(METADATA_VAR:%=-X $(PKGNAME)/common/metadata.%)
+$(BUILD_DIR)/bin/%: GO_LDFLAGS = $(METADATA_VAR:%=-X $(PKGNAME)/common/metadata.%)
 $(BUILD_DIR)/bin/%:
 	@echo "Building $@"
 	@mkdir -p $(@D)
@@ -238,11 +234,8 @@ release: check-go-version $(MARCH:%=release/%)
 release-all: check-go-version $(RELEASE_PLATFORMS:%=release/%)
 
 .PHONY: $(RELEASE_PLATFORMS:%=release/%)
+$(RELEASE_PLATFORMS:%=release/%): GO_LDFLAGS = $(METADATA_VAR:%=-X $(PKGNAME)/common/metadata.%)
 $(RELEASE_PLATFORMS:%=release/%): release/%: $(foreach exe,$(RELEASE_EXES),release/%/bin/$(exe))
-
-release/%: GO_LDFLAGS = -X $(pkgmap.$(@F))/metadata.CommitSHA=$(EXTRA_VERSION)
-release/%/bin/orderer: GO_LDFLAGS = $(METADATA_VAR:%=-X $(PKGNAME)/common/metadata.%)
-release/%/bin/peer: GO_LDFLAGS = $(METADATA_VAR:%=-X $(PKGNAME)/common/metadata.%)
 
 # explicit targets for all platform executables
 $(foreach platform, $(RELEASE_PLATFORMS), $(RELEASE_EXES:%=release/$(platform)/bin/%)):
@@ -314,3 +307,7 @@ release-clean: $(RELEASE_PLATFORMS:%=%-release-clean)
 
 .PHONY: unit-test-clean
 unit-test-clean:
+
+.PHONY: filename-spaces
+spaces:
+	@scripts/check_file_name_spaces.sh

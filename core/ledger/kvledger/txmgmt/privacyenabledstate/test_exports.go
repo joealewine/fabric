@@ -61,6 +61,7 @@ func (env *LevelDBCommonStorageTestEnv) Init(t testing.TB) {
 			&ledger.StateDBConfig{},
 			dbPath,
 		},
+		[]string{"lscc", "_lifecycle"},
 	)
 	assert.NoError(t, err)
 	env.t = t
@@ -150,6 +151,7 @@ func (env *CouchDBCommonStorageTestEnv) Init(t testing.TB) {
 		&disabled.Provider{},
 		&mock.HealthCheckRegistry{},
 		stateDBConfig,
+		[]string{"lscc", "_lifecycle"},
 	)
 	assert.NoError(t, err)
 	env.t = t

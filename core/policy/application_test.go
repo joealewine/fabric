@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/hyperledger/fabric-protos-go/common"
-	"github.com/hyperledger/fabric-protos-go/peer"
 	"github.com/hyperledger/fabric/common/cauthdsl"
 	"github.com/hyperledger/fabric/core/policy/mocks"
 	"github.com/hyperledger/fabric/msp"
@@ -32,8 +31,8 @@ func TestComponentIntegrationSignaturePolicyEnv(t *testing.T) {
 	}
 
 	spenv := cauthdsl.SignedByMspMember("msp")
-	mspenv := protoutil.MarshalOrPanic(&peer.ApplicationPolicy{
-		Type: &peer.ApplicationPolicy_SignaturePolicy{
+	mspenv := protoutil.MarshalOrPanic(&common.ApplicationPolicy{
+		Type: &common.ApplicationPolicy_SignaturePolicy{
 			SignaturePolicy: spenv,
 		},
 	})
@@ -54,8 +53,8 @@ func TestEvaluator(t *testing.T) {
 	okEval := &mocks.Policy{}
 	nokEval := &mocks.Policy{}
 
-	okEval.On("Evaluate", mock.Anything).Return(nil)
-	nokEval.On("Evaluate", mock.Anything).Return(errors.New("bad bad"))
+	okEval.On("EvaluateSignedData", mock.Anything).Return(nil)
+	nokEval.On("EvaluateSignedData", mock.Anything).Return(errors.New("bad bad"))
 
 	spp := &mocks.SignaturePolicyProvider{}
 	cpp := &mocks.ChannelPolicyReferenceProvider{}
@@ -79,8 +78,8 @@ func TestEvaluator(t *testing.T) {
 	// SCENARIO: signature policy supplied - good and bad path
 
 	spenv := &common.SignaturePolicyEnvelope{}
-	mspenv := protoutil.MarshalOrPanic(&peer.ApplicationPolicy{
-		Type: &peer.ApplicationPolicy_SignaturePolicy{
+	mspenv := protoutil.MarshalOrPanic(&common.ApplicationPolicy{
+		Type: &common.ApplicationPolicy_SignaturePolicy{
 			SignaturePolicy: spenv,
 		},
 	})
@@ -99,8 +98,8 @@ func TestEvaluator(t *testing.T) {
 	// SCENARIO: channel ref policy supplied - good and bad path
 
 	chrefstr := "Quo usque tandem abutere, Catilina, patientia nostra?"
-	chrefstrEnv := protoutil.MarshalOrPanic(&peer.ApplicationPolicy{
-		Type: &peer.ApplicationPolicy_ChannelConfigPolicyReference{
+	chrefstrEnv := protoutil.MarshalOrPanic(&common.ApplicationPolicy{
+		Type: &common.ApplicationPolicy_ChannelConfigPolicyReference{
 			ChannelConfigPolicyReference: chrefstr,
 		},
 	})
@@ -134,7 +133,7 @@ func TestChannelPolicyReference(t *testing.T) {
 	mcpmg.On("Manager", "channel").Return(mm, true)
 
 	mp := &mocks.Policy{}
-	mp.On("Evaluate", mock.Anything).Return(nil)
+	mp.On("EvaluateSignedData", mock.Anything).Return(nil)
 	mm.On("GetPolicy", "As the sun breaks above the ground").Return(mp, true)
 	err = ape.evaluateChannelConfigPolicyReference("As the sun breaks above the ground", nil)
 	assert.NoError(t, err)

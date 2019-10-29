@@ -21,7 +21,6 @@ import (
 	"time"
 
 	docker "github.com/fsouza/go-dockerclient"
-	corepeer "github.com/hyperledger/fabric/core/peer"
 	"github.com/hyperledger/fabric/integration/helpers"
 	"github.com/hyperledger/fabric/integration/nwo/commands"
 	"github.com/hyperledger/fabric/integration/nwo/fabricconfig"
@@ -137,7 +136,7 @@ type Network struct {
 	StartPort          uint16
 	Components         *Components
 	DockerClient       *docker.Client
-	ExternalBuilders   []corepeer.ExternalBuilder
+	ExternalBuilders   []fabricconfig.ExternalBuilder
 	NetworkID          string
 	EventuallyTimeout  time.Duration
 	MetricsProvider    string
@@ -165,11 +164,10 @@ type Network struct {
 // allocated sequentially from the specified startPort.
 func New(c *Config, rootDir string, client *docker.Client, startPort int, components *Components) *Network {
 	network := &Network{
-		StartPort:        uint16(startPort),
-		RootDir:          rootDir,
-		Components:       components,
-		DockerClient:     client,
-		ExternalBuilders: []corepeer.ExternalBuilder{},
+		StartPort:    uint16(startPort),
+		RootDir:      rootDir,
+		Components:   components,
+		DockerClient: client,
 
 		NetworkID:         helpers.UniqueName(),
 		EventuallyTimeout: time.Minute,
@@ -191,11 +189,11 @@ func New(c *Config, rootDir string, client *docker.Client, startPort int, compon
 
 	cwd, err := os.Getwd()
 	Expect(err).NotTo(HaveOccurred())
-	network.ExternalBuilders = append(network.ExternalBuilders, corepeer.ExternalBuilder{
+	network.ExternalBuilders = []fabricconfig.ExternalBuilder{{
 		Path:                 filepath.Join(cwd, "..", "externalbuilders", "binary"),
 		Name:                 "binary",
 		EnvironmentWhitelist: []string{"GOPROXY"},
-	})
+	}}
 
 	if network.Templates == nil {
 		network.Templates = &Templates{}
@@ -307,6 +305,28 @@ func (n *Network) WriteOrdererConfig(o *Orderer, config *fabricconfig.Orderer) {
 	Expect(err).NotTo(HaveOccurred())
 }
 
+// ReadConfigTxConfig  unmarshals the configtx.yaml and returns an
+// object approximating its contents.
+func (n *Network) ReadConfigTxConfig() *fabricconfig.ConfigTx {
+	var configtx fabricconfig.ConfigTx
+	configtxBytes, err := ioutil.ReadFile(n.ConfigTxConfigPath())
+	Expect(err).NotTo(HaveOccurred())
+
+	err = yaml.Unmarshal(configtxBytes, &configtx)
+	Expect(err).NotTo(HaveOccurred())
+
+	return &configtx
+}
+
+// WriteConfigTxConfig serializes the provided configuration to configtx.yaml.
+func (n *Network) WriteConfigTxConfig(config *fabricconfig.ConfigTx) {
+	configtxBytes, err := yaml.Marshal(config)
+	Expect(err).NotTo(HaveOccurred())
+
+	err = ioutil.WriteFile(n.ConfigTxConfigPath(), configtxBytes, 0644)
+	Expect(err).NotTo(HaveOccurred())
+}
+
 // PeerDir returns the path to the configuration directory for the specified
 // Peer.
 func (n *Network) PeerDir(p *Peer) string {
@@ -317,6 +337,11 @@ func (n *Network) PeerDir(p *Peer) string {
 // specified peer.
 func (n *Network) PeerConfigPath(p *Peer) string {
 	return filepath.Join(n.PeerDir(p), "core.yaml")
+}
+
+// PeerLedgerDir returns the ledger root directory for the specified peer.
+func (n *Network) PeerLedgerDir(p *Peer) string {
+	return filepath.Join(n.PeerDir(p), "filesystem/ledgersData")
 }
 
 // ReadPeerConfig unmarshals a peer's core.yaml and returns an object
@@ -1478,6 +1503,14 @@ func (n *Network) nextColor() string {
 // command line tools that are expected to run to completion.
 func (n *Network) StartSession(cmd *exec.Cmd, name string) (*gexec.Session, error) {
 	ansiColorCode := n.nextColor()
+	fmt.Fprintf(
+		ginkgo.GinkgoWriter,
+		"\x1b[33m[d]\x1b[%s[%s]\x1b[0m starting %s %s\n",
+		ansiColorCode,
+		name,
+		filepath.Base(cmd.Args[0]),
+		strings.Join(cmd.Args[1:], " "),
+	)
 	return gexec.Start(
 		cmd,
 		gexec.NewPrefixedWriter(

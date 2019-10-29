@@ -150,7 +150,7 @@ type SimpleQueryExecutor interface {
 	// startKey is included in the results and endKey is excluded. An empty startKey refers to the first available key
 	// and an empty endKey refers to the last available key. For scanning all the keys, both the startKey and the endKey
 	// can be supplied as empty strings. However, a full scan should be used judiciously for performance reasons.
-	// The returned ResultsIterator contains results of type *KV which is defined in protos/ledger/queryresult.
+	// The returned ResultsIterator contains results of type *KV which is defined in fabric-protos/ledger/queryresult.
 	GetStateRangeScanIterator(namespace string, startKey string, endKey string) (commonledger.ResultsIterator, error)
 	// GetPrivateDataHash gets the hash of the value of a private data item identified by a tuple <namespace, collection, key>
 	// Function `GetPrivateData` is only meaningful when it is invoked on a peer that is authorized to have the private data
@@ -175,18 +175,18 @@ type QueryExecutor interface {
 	// and an empty endKey refers to the last available key. For scanning all the keys, both the startKey and the endKey
 	// can be supplied as empty strings. However, a full scan should be used judiciously for performance reasons.
 	// metadata is a map of additional query parameters
-	// The returned ResultsIterator contains results of type *KV which is defined in protos/ledger/queryresult.
+	// The returned ResultsIterator contains results of type *KV which is defined in fabric-protos/ledger/queryresult.
 	GetStateRangeScanIteratorWithMetadata(namespace string, startKey, endKey string, metadata map[string]interface{}) (QueryResultsIterator, error)
 	// ExecuteQuery executes the given query and returns an iterator that contains results of type specific to the underlying data store.
 	// Only used for state databases that support query
 	// For a chaincode, the namespace corresponds to the chaincodeId
-	// The returned ResultsIterator contains results of type *KV which is defined in protos/ledger/queryresult.
+	// The returned ResultsIterator contains results of type *KV which is defined in fabric-protos/ledger/queryresult.
 	ExecuteQuery(namespace, query string) (commonledger.ResultsIterator, error)
 	// ExecuteQueryWithMetadata executes the given query and returns an iterator that contains results of type specific to the underlying data store.
 	// metadata is a map of additional query parameters
 	// Only used for state databases that support query
 	// For a chaincode, the namespace corresponds to the chaincodeId
-	// The returned ResultsIterator contains results of type *KV which is defined in protos/ledger/queryresult.
+	// The returned ResultsIterator contains results of type *KV which is defined in fabric-protos/ledger/queryresult.
 	ExecuteQueryWithMetadata(namespace, query string, metadata map[string]interface{}) (QueryResultsIterator, error)
 	// GetPrivateData gets the value of a private data item identified by a tuple <namespace, collection, key>
 	GetPrivateData(namespace, collection, key string) ([]byte, error)
@@ -200,12 +200,12 @@ type QueryExecutor interface {
 	// startKey is included in the results and endKey is excluded. An empty startKey refers to the first available key
 	// and an empty endKey refers to the last available key. For scanning all the keys, both the startKey and the endKey
 	// can be supplied as empty strings. However, a full scan shuold be used judiciously for performance reasons.
-	// The returned ResultsIterator contains results of type *KV which is defined in protos/ledger/queryresult.
+	// The returned ResultsIterator contains results of type *KV which is defined in fabric-protos/ledger/queryresult.
 	GetPrivateDataRangeScanIterator(namespace, collection, startKey, endKey string) (commonledger.ResultsIterator, error)
 	// ExecuteQuery executes the given query and returns an iterator that contains results of type specific to the underlying data store.
 	// Only used for state databases that support query
 	// For a chaincode, the namespace corresponds to the chaincodeId
-	// The returned ResultsIterator contains results of type *KV which is defined in protos/ledger/queryresult.
+	// The returned ResultsIterator contains results of type *KV which is defined in fabric-protos/ledger/queryresult.
 	ExecuteQueryOnPrivateData(namespace, collection, query string) (commonledger.ResultsIterator, error)
 	// Done releases resources occupied by the QueryExecutor
 	Done()
@@ -214,7 +214,7 @@ type QueryExecutor interface {
 // HistoryQueryExecutor executes the history queries
 type HistoryQueryExecutor interface {
 	// GetHistoryForKey retrieves the history of values for a key.
-	// The returned ResultsIterator contains results of type *KeyModification which is defined in protos/ledger/queryresult.
+	// The returned ResultsIterator contains results of type *KeyModification which is defined in fabric-protos/ledger/queryresult.
 	GetHistoryForKey(namespace string, key string) (commonledger.ResultsIterator, error)
 }
 
@@ -314,7 +314,6 @@ type RetrievedPvtdata interface {
 }
 
 // TxPvtdataInfo captures information about the requested private data to be retrieved
-// and is populated by ledger during commit
 type TxPvtdataInfo struct {
 	TxID                  string
 	Invalid               bool
@@ -557,6 +556,8 @@ type DeployedChaincodeInfoProvider interface {
 	CollectionInfo(channelName, chaincodeName, collectionName string, qe SimpleQueryExecutor) (*common.StaticCollectionConfig, error)
 	// ImplicitCollections returns a slice that contains one proto msg for each of the implicit collections
 	ImplicitCollections(channelName, chaincodeName string, qe SimpleQueryExecutor) ([]*common.StaticCollectionConfig, error)
+	// AllCollectionsConfigPkg returns a combined collection config pkg that contains both explicit and implicit collections
+	AllCollectionsConfigPkg(channelName, chaincodeName string, qe SimpleQueryExecutor) (*common.CollectionConfigPackage, error)
 }
 
 // DeployedChaincodeInfo encapsulates chaincode information from the deployed chaincodes
@@ -565,27 +566,7 @@ type DeployedChaincodeInfo struct {
 	Hash                        []byte
 	Version                     string
 	ExplicitCollectionConfigPkg *common.CollectionConfigPackage
-	ImplicitCollections         []*common.StaticCollectionConfig
 	IsLegacy                    bool
-}
-
-// GetAllCollectionsConfigPkg returns a combined collection config pkg that contains both explicit and implicit collections
-func (dci DeployedChaincodeInfo) AllCollectionsConfigPkg() *common.CollectionConfigPackage {
-	var combinedColls []*common.CollectionConfig
-	if dci.ExplicitCollectionConfigPkg != nil {
-		combinedColls = append(combinedColls, dci.ExplicitCollectionConfigPkg.Config...)
-	}
-	for _, implicitColl := range dci.ImplicitCollections {
-		c := &common.CollectionConfig{}
-		c.Payload = &common.CollectionConfig_StaticCollectionConfig{StaticCollectionConfig: implicitColl}
-		combinedColls = append(combinedColls, c)
-	}
-	if combinedColls == nil {
-		return nil
-	}
-	return &common.CollectionConfigPackage{
-		Config: combinedColls,
-	}
 }
 
 // ChaincodeLifecycleInfo captures the update info of a chaincode
@@ -685,3 +666,4 @@ type Hasher interface {
 //go:generate counterfeiter -o mock/health_check_registry.go -fake-name HealthCheckRegistry . HealthCheckRegistry
 //go:generate counterfeiter -o mock/cc_event_listener.go -fake-name ChaincodeLifecycleEventListener . ChaincodeLifecycleEventListener
 //go:generate counterfeiter -o mock/custom_tx_processor.go -fake-name CustomTxProcessor . CustomTxProcessor
+//go:generate counterfeiter -o mock/cc_event_provider.go -fake-name ChaincodeLifecycleEventProvider . ChaincodeLifecycleEventProvider
